@@ -8,3 +8,4 @@
 |------|------|
 | [01-flask-login](./01-flask-login) | Flask 用户管理系统 — 登录功能（含安全修复） |
 | [02-learning-process](./02-learning-process) | 开发过程记录 — 步骤、问题与修复 |
+| [03-vulnerability-report](./03-vulnerability-report) | 漏洞分析报告（PDF） |
