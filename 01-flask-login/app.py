@@ -2,6 +2,8 @@ from flask import Flask, render_template, request, redirect, session
 from datetime import timedelta
 import hashlib
 import time
+import sqlite3
+import os
 
 app = Flask(__name__)
 app.secret_key = "dev-key-2025"
@@ -9,20 +11,54 @@ app.secret_key = "dev-key-2025"
 # ===== session 超时设置（修复 #5）=====
 app.permanent_session_lifetime = timedelta(minutes=30)
 
+# ===== 数据库初始化 =====
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "users.db")
+
+
+def init_db():
+    """初始化 SQLite 数据库"""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        email TEXT,
+        phone TEXT
+    )""")
+    # 插入默认用户（密码明文存储）
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("admin", "admin123", "admin@example.com", "13800138000"))
+    c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+              ("alice", "alice2025", "alice@example.com", "13900139001"))
+    conn.commit()
+    conn.close()
+    print("✅ 数据库初始化完成")
+
+
+init_db()
+
 
 def sha256(password):
     """返回 SHA256 哈希值"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 
+def get_db():
+    """获取数据库连接"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 # ===== 登录频率限制（修复 #3）=====
-LOGIN_ATTEMPTS = {}  # key: IP, value: {"count": int, "lockout_until": float}
+LOGIN_ATTEMPTS = {}
 MAX_ATTEMPTS = 5
 LOCKOUT_SECONDS = 60
 
 
 def check_rate_limit(ip):
-    """检查 IP 是否被锁定"""
     now = time.time()
     record = LOGIN_ATTEMPTS.get(ip)
     if record:
@@ -30,13 +66,11 @@ def check_rate_limit(ip):
             remaining = int(record["lockout_until"] - now)
             return False, f"登录过于频繁，请等待 {remaining} 秒后再试"
         if record["lockout_until"] and now >= record["lockout_until"]:
-            # 锁定时间已过，重置
             del LOGIN_ATTEMPTS[ip]
     return True, ""
 
 
 def record_failed_attempt(ip):
-    """记录一次失败尝试"""
     now = time.time()
     record = LOGIN_ATTEMPTS.get(ip)
     if record:
@@ -48,11 +82,10 @@ def record_failed_attempt(ip):
 
 
 def reset_rate_limit(ip):
-    """登录成功后清除记录"""
     LOGIN_ATTEMPTS.pop(ip, None)
 
 
-# ===== 用户数据库 - 密码已做 SHA256 哈希（修复 #1）=====
+# ===== 用户数据库 - 内存字典 =====
 USERS = {
     "admin": {
         "username": "admin",
@@ -78,49 +111,116 @@ def index():
     """首页：若已登录则显示用户信息，否则提示未登录"""
     username = session.get("username")
     user = USERS.get(username) if username else None
-    # 移除密码字段，避免泄露到前端
+
+    # 如果不在内存字典中，尝试从 SQLite 查询
+    if not user and username:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            user = {
+                "username": row["username"],
+                "email": row["email"],
+                "phone": row["phone"]
+            }
+
     safe_user = {k: v for k, v in user.items() if k != "password"} if user else None
-    return render_template("index.html", user=safe_user)
+    # 获取搜索结果（如果有）
+    search_results = session.pop("search_results", None)
+    search_keyword = session.pop("search_keyword", None)
+    return render_template("index.html", user=safe_user, search_results=search_results, search_keyword=search_keyword)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """登录页面：GET 显示表单，POST 验证身份"""
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         client_ip = request.remote_addr or "unknown"
 
-        # 频率限制检查
         ok, msg = check_rate_limit(client_ip)
         if not ok:
             return render_template("login.html", error=msg)
 
-        # 校验用户名是否存在
+        # 先检查内存字典
         user = USERS.get(username)
-        if not user:
-            record_failed_attempt(client_ip)
-            return render_template("login.html", error="用户名不存在")
+        if user and user["password"] == sha256(password):
+            reset_rate_limit(client_ip)
+            session.permanent = True
+            session["username"] = username
+            safe_user = {k: v for k, v in user.items() if k != "password"}
+            return render_template("index.html", user=safe_user)
 
-        # 使用哈希比对密码
-        if user["password"] != sha256(password):
-            record_failed_attempt(client_ip)
-            return render_template("login.html", error="密码错误")
+        # 再检查 SQLite 数据库
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        conn.close()
 
-        # 登录成功
-        reset_rate_limit(client_ip)
-        session.permanent = True  # 启用 session 超时
-        session["username"] = username
-        # 不将密码传递到模板
-        safe_user = {k: v for k, v in user.items() if k != "password"}
-        return render_template("index.html", user=safe_user)
+        if row:
+            db_password = row["password"]
+            if db_password == password:
+                reset_rate_limit(client_ip)
+                session.permanent = True
+                session["username"] = row["username"]
+                return render_template("index.html", user={
+                    "username": row["username"],
+                    "email": row["email"],
+                    "phone": row["phone"]
+                })
+
+        record_failed_attempt(client_ip)
+        return render_template("login.html", error="用户名或密码错误")
 
     return render_template("login.html")
 
 
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    """注册页面"""
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        email = request.form.get("email", "")
+        phone = request.form.get("phone", "")
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
+                       (username, password, email, phone))
+        conn.commit()
+        conn.close()
+        return render_template("login.html", message="注册成功，请登录")
+
+    return render_template("register.html")
+
+
+@app.route("/search")
+def search():
+    """搜索用户：通过 keyword 参数模糊查询"""
+    keyword = request.args.get("keyword", "")
+    if not keyword:
+        return redirect("/")
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username LIKE ? OR email LIKE ?",
+                   (f"%{keyword}%", f"%{keyword}%"))
+    rows = cursor.fetchall()
+    conn.close()
+
+    # 将结果存入 session 以便在首页展示
+    results = [{"id": r["id"], "username": r["username"], "email": r["email"], "phone": r["phone"]} for r in rows]
+    session["search_results"] = results
+    session["search_keyword"] = keyword
+    return redirect("/")
+
+
 @app.route("/logout")
 def logout():
-    """登出：清除 session 并重定向到首页"""
     session.clear()
     return redirect("/")
 
