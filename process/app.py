@@ -234,9 +234,24 @@ def upload():
         if not file or file.filename == "":
             return render_template("upload.html", error="请选择要上传的文件")
 
-        filename = file.filename
+        # 修复1：过滤路径穿越，只保留文件名
+        filename = os.path.basename(file.filename)
+        if not filename:
+            return render_template("upload.html", error="无效的文件名")
+
+        # 修复2：限制仅允许图片类型
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in allowed_extensions:
+            return render_template("upload.html", error=f"不支持的文件类型（{ext}），仅允许图片文件")
+
         upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "uploads")
-        file.save(os.path.join(upload_dir, filename))
+        save_path = os.path.normpath(os.path.join(upload_dir, filename))
+        # 修复1续：确保文件仍在 uploads 目录内
+        if not save_path.startswith(os.path.normpath(upload_dir)):
+            return render_template("upload.html", error="非法的文件路径")
+
+        file.save(save_path)
         file_url = f"/static/uploads/{filename}"
         return render_template("upload.html", success=True, file_url=file_url, filename=filename)
 
