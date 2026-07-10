@@ -28,6 +28,11 @@ def init_db():
         email TEXT,
         phone TEXT
     )""")
+    # 添加 balance 列（如已存在则忽略）
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     # 插入默认用户（密码明文存储）
     c.execute("INSERT OR IGNORE INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
               ("admin", "admin123", "admin@example.com", "13800138000"))
@@ -239,11 +244,16 @@ def upload():
         if not filename:
             return render_template("upload.html", error="无效的文件名")
 
-        # 修复2：限制仅允许图片类型
+        # 修复2：限制仅允许图片类型（修复双扩展名绕过）
         allowed_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
         ext = os.path.splitext(filename)[1].lower()
         if ext not in allowed_extensions:
             return render_template("upload.html", error=f"不支持的文件类型（{ext}），仅允许图片文件")
+        # 检查文件名中是否包含非图片扩展名（双扩展名绕过）
+        name_lower = filename.lower()
+        for bad_ext in [".php", ".html", ".htm", ".js", ".py", ".asp", ".aspx", ".jsp", ".cgi", ".pl", ".sh"]:
+            if bad_ext in name_lower.replace(ext, ""):
+                return render_template("upload.html", error="文件名不合法")
 
         upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "uploads")
         save_path = os.path.normpath(os.path.join(upload_dir, filename))
@@ -256,6 +266,93 @@ def upload():
         return render_template("upload.html", success=True, file_url=file_url, filename=filename)
 
     return render_template("upload.html")
+
+
+@app.route("/profile")
+def profile():
+    """个人中心页面：需登录且只能查看自己的资料"""
+    if not session.get("username"):
+        return redirect("/login")
+
+    login_username = session["username"]
+    user_id = request.args.get("user_id", "")
+
+    # 只允许查看自己的资料
+    if user_id != login_username:
+        return render_template("profile.html", error="无权查看其他用户的资料")
+
+    # 先在内存字典中查找
+    for u in USERS.values():
+        if u["username"] == user_id or u.get("id") == user_id:
+            return render_template("profile.html", user={
+                "id": user_id,
+                "username": u["username"],
+                "email": u["email"],
+                "phone": u["phone"],
+                "balance": u["balance"]
+            })
+
+    # 再查 SQLite
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = ? OR username = ?", (user_id, user_id))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return render_template("profile.html", user={
+            "id": row["id"],
+            "username": row["username"],
+            "email": row["email"],
+            "phone": row["phone"],
+            "balance": row["balance"] or 0
+        })
+
+    return render_template("profile.html", error="用户不存在")
+
+
+@app.route("/recharge", methods=["POST"])
+def recharge():
+    """充值接口：需登录且只能给自己充值"""
+    if not session.get("username"):
+        return redirect("/login")
+
+    login_username = session["username"]
+    user_id = request.form.get("user_id", "")
+    amount = request.form.get("amount", "0")
+
+    # 只允许给自己充值
+    if user_id != login_username:
+        return redirect("/profile?user_id=" + login_username)
+
+    try:
+        amount = float(amount)
+    except ValueError:
+        amount = 0
+
+    # 修复：不允许负金额和零金额
+    if amount <= 0:
+        return redirect("/profile?user_id=" + login_username)
+
+    # 修复：设置单次充值上限
+    if amount > 1000000:
+        return redirect("/profile?user_id=" + login_username)
+
+    # 先检查内存字典
+    for u in USERS.values():
+        if u["username"] == user_id or u.get("id") == user_id:
+            u["balance"] = u["balance"] + amount
+            return redirect(f"/profile?user_id={user_id}")
+
+    # 再更新 SQLite
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ? OR username = ?",
+                   (amount, user_id, user_id))
+    conn.commit()
+    conn.close()
+
+    return redirect(f"/profile?user_id={user_id}")
 
 
 @app.route("/logout")
