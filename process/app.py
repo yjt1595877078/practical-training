@@ -357,11 +357,15 @@ def recharge():
 
 @app.route("/page")
 def page():
-    """动态页面加载（不校验路径，存在路径穿越风险）"""
+    """动态页面加载（已修复路径穿越）"""
     name = request.args.get("name", "")
 
     pages_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages")
-    filepath = os.path.join(pages_dir, name)
+    filepath = os.path.normpath(os.path.join(pages_dir, name))
+
+    # 修复：确保文件在 pages 目录内
+    if not filepath.startswith(os.path.normpath(pages_dir)):
+        return render_template("index.html", page_content="<p>页面不存在</p>")
 
     if os.path.isfile(filepath):
         with open(filepath, "r") as f:
