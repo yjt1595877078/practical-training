@@ -35,6 +35,7 @@
     <hr style="margin: 24px 0; border: none; border-top: 1px solid #eee;">
     <p class="guest-text">充值</p>
     <form method="POST" action="/recharge" style="display: flex; gap: 10px; align-items: flex-end;">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="user_id" value="{{ user['id'] }}">
         <div class="form-group" style="flex:1; margin-bottom:0;">
             <label class="form-label" for="amount">充值金额</label>
@@ -46,6 +47,7 @@
     <hr style="margin: 24px 0; border: none; border-top: 1px solid #eee;">
     <p class="guest-text">修改密码</p>
     <form method="POST" action="/change-password" style="display: flex; flex-direction: column; gap: 10px;">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="username" value="{{ user['username'] }}">
         <div class="form-group" style="margin-bottom:0;">
             <label class="form-label" for="new_password">新密码</label>

@@ -1,9 +1,10 @@
-from flask import Flask, render_template, request, redirect, session, send_from_directory
+from flask import Flask, render_template, request, redirect, session, send_from_directory, abort
 from datetime import timedelta
 import hashlib
 import time
 import sqlite3
 import os
+import secrets
 
 app = Flask(__name__)
 app.secret_key = "dev-key-2025"
@@ -94,6 +95,28 @@ def reset_rate_limit(ip):
     LOGIN_ATTEMPTS.pop(ip, None)
 
 
+# ===== CSRF 防护 =====
+def generate_csrf_token():
+    """生成并存储 CSRF Token"""
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(32)
+    return session["_csrf_token"]
+
+
+def validate_csrf():
+    """验证 CSRF Token"""
+    token = request.form.get("_csrf_token", "")
+    stored = session.get("_csrf_token", "")
+    if not token or not stored or token != stored:
+        abort(403, "CSRF Token 无效")
+
+
+@app.context_processor
+def inject_csrf_token():
+    """向模板注入 CSRF Token"""
+    return dict(csrf_token=generate_csrf_token)
+
+
 # ===== 用户数据库 - 内存字典 =====
 USERS = {
     "admin": {
@@ -145,6 +168,7 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        validate_csrf()
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         client_ip = request.remote_addr or "unknown"
@@ -191,6 +215,7 @@ def login():
 def register():
     """注册页面"""
     if request.method == "POST":
+        validate_csrf()
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         email = request.form.get("email", "")
@@ -235,6 +260,7 @@ def upload():
         return redirect("/login")
 
     if request.method == "POST":
+        validate_csrf()
         file = request.files.get("file")
         if not file or file.filename == "":
             return render_template("upload.html", error="请选择要上传的文件")
@@ -317,6 +343,7 @@ def recharge():
     if not session.get("username"):
         return redirect("/login")
 
+    validate_csrf()
     login_username = session["username"]
     user_id = request.form.get("user_id", "")
     amount = request.form.get("amount", "0")
@@ -384,10 +411,11 @@ def page():
 
 @app.route("/change-password", methods=["POST"])
 def change_password():
-    """修改密码（不验证原密码，不校验身份）"""
+    """修改密码"""
     if not session.get("username"):
         return redirect("/login")
 
+    validate_csrf()
     username = request.form.get("username", "")
     new_password = request.form.get("new_password", "")
 
