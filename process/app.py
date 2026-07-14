@@ -382,6 +382,32 @@ def page():
     return render_template("index.html", page_content="<p>页面不存在</p>")
 
 
+@app.route("/change-password", methods=["POST"])
+def change_password():
+    """修改密码（不验证原密码，不校验身份）"""
+    if not session.get("username"):
+        return redirect("/login")
+
+    username = request.form.get("username", "")
+    new_password = request.form.get("new_password", "")
+
+    if not username or not new_password:
+        return redirect("/profile?user_id=" + session["username"])
+
+    # 更新内存字典中的密码
+    if username in USERS:
+        USERS[username]["password"] = sha256(new_password)
+
+    # 更新 SQLite 中的密码
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET password = ? WHERE username = ?", (new_password, username))
+    conn.commit()
+    conn.close()
+
+    return redirect("/profile?user_id=" + username)
+
+
 @app.route("/logout")
 def logout():
     session.clear()
