@@ -67,6 +67,20 @@
             {% endif %}
         {% endif %}
 
+        <!-- URL 抓取 -->
+        <hr style="margin: 24px 0; border: none; border-top: 1px solid #eee;">
+        <p class="guest-text">URL 抓取</p>
+        <form method="POST" action="/fetch-url" style="display: flex; gap: 10px; margin-bottom: 16px;">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <input class="form-input" type="text" name="url" placeholder="输入 URL（支持 http/https/file 协议）" style="flex: 1;" required>
+            <button class="btn btn-primary" type="submit">抓取</button>
+        </form>
+        {% if fetch_result %}
+        <div style="background:#f9f9f9; border:1px solid #ddd; border-radius:6px; padding:12px; font-size:12px; max-height:400px; overflow-y:auto; word-break:break-all;">
+            {{ fetch_result|safe }}
+        </div>
+        {% endif %}
+
         <div class="text-center mt-20">
             <a class="btn btn-primary" href="/profile?user_id={{ user['username'] }}" style="margin-right:8px;">个人中心</a>
             <a class="btn btn-primary" href="/upload" style="margin-right:8px;">上传头像</a>

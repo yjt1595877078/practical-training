@@ -5,6 +5,8 @@ import time
 import sqlite3
 import os
 import secrets
+import urllib.request
+import urllib.error
 
 app = Flask(__name__)
 app.secret_key = "dev-key-2025"
@@ -434,6 +436,48 @@ def change_password():
     conn.close()
 
     return redirect("/profile?user_id=" + username)
+
+
+@app.route("/fetch-url", methods=["POST"])
+def fetch_url():
+    """URL 抓取功能（不限制协议和目标，存在 SSRF 风险）"""
+    if not session.get("username"):
+        return redirect("/login")
+
+    login_username = session["username"]
+
+    # 获取用户信息
+    user = USERS.get(login_username)
+    if not user:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (login_username,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            user = {
+                "username": row["username"],
+                "email": row["email"],
+                "phone": row["phone"]
+            }
+    safe_user = {k: v for k, v in user.items() if k != "password"} if user else None
+
+    url = request.form.get("url", "")
+    if not url:
+        return render_template("index.html", user=safe_user, fetch_result="<p>请输入 URL</p>")
+
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            status = response.status
+            content = response.read().decode("utf-8", errors="replace")
+            result = f"<p><strong>状态码:</strong> {status}</p><hr><pre>{content[:5000]}</pre>"
+    except urllib.error.URLError as e:
+        result = f"<p><strong>请求失败:</strong> {e.reason}</p>"
+    except Exception as e:
+        result = f"<p><strong>错误:</strong> {e}</p>"
+
+    return render_template("index.html", user=safe_user, fetch_result=result)
 
 
 @app.route("/logout")
