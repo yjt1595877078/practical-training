@@ -7,6 +7,8 @@ import os
 import secrets
 import urllib.request
 import urllib.error
+import urllib.parse
+import socket
 
 app = Flask(__name__)
 app.secret_key = "dev-key-2025"
@@ -465,6 +467,29 @@ def fetch_url():
     url = request.form.get("url", "")
     if not url:
         return render_template("index.html", user=safe_user, fetch_result="<p>请输入 URL</p>")
+
+    # 修复 SSRF：限制协议
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return render_template("index.html", user=safe_user, fetch_result="<p>不支持的协议</p>")
+
+    # 修复 SSRF：阻止内网 IP
+    try:
+        hostname = parsed.hostname
+        if hostname in ("localhost", "127.0.0.1", "0.0.0.0"):
+            return render_template("index.html", user=safe_user, fetch_result="<p>不允许访问内网地址</p>")
+        ip = socket.gethostbyname(hostname)
+        # 检查常见内网段
+        if ip.startswith("10.") or ip.startswith("172.16.") or ip.startswith("172.17.") or \
+           ip.startswith("172.18.") or ip.startswith("172.19.") or ip.startswith("172.20.") or \
+           ip.startswith("172.21.") or ip.startswith("172.22.") or ip.startswith("172.23.") or \
+           ip.startswith("172.24.") or ip.startswith("172.25.") or ip.startswith("172.26.") or \
+           ip.startswith("172.27.") or ip.startswith("172.28.") or ip.startswith("172.29.") or \
+           ip.startswith("172.30.") or ip.startswith("172.31.") or ip.startswith("192.168.") or \
+           ip == "127.0.0.1":
+            return render_template("index.html", user=safe_user, fetch_result="<p>不允许访问内网地址</p>")
+    except Exception:
+        return render_template("index.html", user=safe_user, fetch_result="<p>无法解析目标地址</p>")
 
     try:
         req = urllib.request.Request(url)
