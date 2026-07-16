@@ -509,7 +509,7 @@ def fetch_url():
 
 @app.route("/ping", methods=["GET", "POST"])
 def ping():
-    """Ping 网络诊断（命令拼接注入漏洞）"""
+    """Ping 网络诊断"""
     if not session.get("username"):
         return redirect("/login")
 
@@ -518,9 +518,14 @@ def ping():
         if not ip:
             return render_template("ping.html", output="请输入 IP 地址")
 
+        # 修复：校验输入仅允许合法 IP 或域名
+        import re as re_mod
+        if not re_mod.match(r'^[a-zA-Z0-9\.\-]+$', ip):
+            return render_template("ping.html", output="输入包含非法字符")
+
+        # 修复：使用参数化方式，禁止 shell=True
         try:
-            cmd = f"ping -c 3 {ip}"
-            output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, timeout=30)
+            output = subprocess.check_output(["ping", "-c", "3", ip], stderr=subprocess.STDOUT, timeout=30)
             output = output.decode("utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             output = "命令执行超时"
